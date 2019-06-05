@@ -1657,7 +1657,161 @@ TIP: *Result:* After the instance is enabled again the jobs will pickup and run 
 
 WARNING: At this point make sure the instances you disabled in the previous steps are definitely enabled again! Otherwise subsequent steps might fail...
 
-== LAB 11: Tower Client
+== LAB 11: Improving Performance with Fact Caching
+When a job is launched, Ansible Tower injects all ansible_facts for each of the managed hosts from the running job into m
+emcache. After finishing the job, Ansible Tower retrieves all the records for a particular host from memcache, and then s
+aves each fact that has an update time later than the cached copy in the fact cache database.
+
+* Create a new playbook in your_repository "apache_setup.yml" and templates "httpd.conf.j2" / "index.html.j2" in a new te
+mplates folder and update your project on Ansible Tower
+(Public repo https://gitlab.com/dmunne/my-webservers-TEST)
+
+* Create a Job Template enabling privilege escalation and playbook "apache_setup.yml"
+
+apache_setup.yml
+----
+---
+- hosts: web
+  name: Install the web server and start it
+  gather_facts: no
+  become: yes
+  vars:
+    httpd_packages:
+      - httpd
+      - mod_wsgi
+    apache_test_message: This is a test message
+    apache_max_keep_alive_requests: 115
+
+  tasks:
+    - name: Install the apache web server
+      yum:
+        name: "{{ httpd_packages }}"
+        state: present
+      notify: restart apache service
+
+    - name: Generate apache's configuration file from jinja2 template
+      template:
+        src: templates/httpd.conf.j2
+        dest: /etc/httpd/conf/httpd.conf
+      notify: restart apache service
+
+    - name: Generate a basic homepage from jinja2 template
+      template:
+        src: templates/index.html.j2
+        dest: /var/www/html/index.html
+        force: yes
+
+    - name: Open the firewalld http port
+      firewalld:
+        port: 80/tcp
+        permanent: true
+        state: enabled
+      notify: restart firewalld service
+
+    - name: Start the apache web server
+      service:
+        name: httpd
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart firewalld service
+      service:
+        name: firewalld
+        state: restarted
+        enabled: yes
+
+    - name: restart apache service
+      service:
+        name: httpd
+        state: restarted
+        enabled: yes
+----
+
+httpd.conf.j2
+----
+ServerRoot "/etc/httpd"
+Listen 80
+Include conf.modules.d/*.conf
+User apache
+Group apache
+ServerAdmin root@localhost
+<Directory />
+    AllowOverride none
+    Require all denied
+</Directory>
+DocumentRoot "/var/www/html"
+<Directory "/var/www">
+    AllowOverride None
+    Require all granted
+</Directory>
+<Directory "/var/www/html">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+<IfModule dir_module>
+    DirectoryIndex index.html
+</IfModule>
+<Files ".ht*">
+    Require all denied
+</Files>
+ErrorLog "logs/error_log"
+MaxKeepAliveRequests {{ apache_max_keep_alive_requests }}
+LogLevel warn
+<IfModule log_config_module>
+    LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+    LogFormat "%h %l %u %t \"%r\" %>s %b" common
+    <IfModule logio_module>
+      LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\" %I %O" combinedio
+    </IfModule>
+    CustomLog "logs/access_log" combined
+</IfModule>
+<IfModule alias_module>
+    ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
+</IfModule>
+<Directory "/var/www/cgi-bin">
+    AllowOverride None
+    Options None
+    Require all granted
+</Directory>
+<IfModule mime_module>
+    TypesConfig /etc/mime.types
+    AddType application/x-compress .Z
+    AddType application/x-gzip .gz .tgz
+    AddType text/html .shtml
+    AddOutputFilter INCLUDES .shtml
+</IfModule>
+AddDefaultCharset UTF-8
+<IfModule mime_magic_module>
+    MIMEMagicFile conf/magic
+</IfModule>
+EnableSendfile on
+IncludeOptional conf.d/*.conf
+----
+
+httpd.conf.j2
+----
+{{ apache_test_message }} {{ ansible_distribution }} {{ ansible_distribution_version }} <br>
+Current Host: {{ ansible_hostname }} <br>
+Server list: <br>
+{% for host in groups['all'] %}
+{{ host }} <br>
+{% endfor %}
+----
+
+* Launch the job template created, and verify that the STATUS of the job in the DETAILS section displays Failed.The job failed because the playbook it ran uses a variable that gets its value from the ansible_distribution Ansible fact. The playbook used for the job does not gather facts, and the Job Template does not use fact caching, so the task failed.
+
+* Edit the apache-setup.yml playbook and change the gather_facts: variable value to yes to enable fact gathering. 
+
+* Go back to the job template and Select Use Fact Cache to enable the Fact Caching option and launch de job template again. Verify that the STATUS of the job in the DETAILS section displays Successful.
+
+* Set the gather_facts variable to no in the apache_setup.yml playbook. Launch another job using the same Job Template. This new job, based on the modified playbook, will succeed because the Ansible facts have been cached and can be used to execute the playbook correctly.
+
+NOTE: If you configure the profile_tasks callback you can see the time per task and check the Gathering Facts one
+
+
+== LAB 12: Tower Client
 
 The tower-cli tool is a command line tool for Ansible Tower. It allows Tower commands to be easily run from the Unix command line. It can also be used as a client library for other python apps, or as a reference for others developing API interactions with Tower's REST API.
 
@@ -1909,7 +2063,7 @@ Run the script, and verify that all resources were properly created in the web U
 
 It's easy to script Tower's configuration using *tower-cli*.  This way you can bootstrap a new Tower node or script tasks you have to run on a regular basis. You will learn more about the Tower API at the end of the lab.
 
-== LAB 12: Discovering the Tower API
+== LAB 13: Discovering the Tower API
 
 You have used the Tower API a couple of times in this lab already. In this chapter we'll describe two ways to discover the Tower API if you need to dive in deeper. While the https://docs.ansible.com/ansible-tower/latest/html/towerapi/index.html[principles of the Tower API] are documented and there is an https://docs.ansible.com/ansible-tower/latest/html/towerapi/api_ref.html#/[API reference guide], it's often more efficient to just browse and discover the API.
 
@@ -2093,7 +2247,7 @@ WARNING: Replace *<ID>*
 ----
 <1> don't forget the slash at the end of the URL, favorite error!
 
-== LAB 13: Isolated Nodes
+== LAB 14: Isolated Nodes
 
 Ansible is used to manage complex infrastructures with machines and networks living in multiple separate datacenters, servers behind firewalls or in cloud VPCs and remote locations only reachable over unstable links which may not survive the length of a job run. In cases like these it's often better to run automation local to the nodes.
 
@@ -2208,7 +2362,7 @@ Last but not least, let's check that the job was indeed executed by the isolated
 * Click on the *dmz* group. 
 * Click on the jobs button at the top to see the executed job.
 
-== LAB 14: Run a Job in a Cluster
+== LAB 15: Run a Job in a Cluster
 
 After boot-strapping the Tower configuration from bottom up you are ready to start a job in your Tower cluster. In one of the Tower web UI's:
 
@@ -2255,6 +2409,214 @@ Another way to query the Tower API is using a browser. For example to have a loo
 ** Search the page for the string you are interested in, e.g. `execution_node`
 
 TIP: You can of course query any Tower node.
+
+== LAB 16: Gitlab Runner
+
+Pipelines are the top-level component of continuous integration, delivery, and deployment.
+Pipelines comprise:
+
+* Jobs that define what to run. For example, code compilation or test runs.
+* Stages that define when and how to run. For example, that tests run only after code compilation.
+
+Multiple jobs in the same stage are executed by Runners in parallel, if there are enough concurrent Runners.
+If all the jobs in a stage:
+
+* Succeed, the pipeline moves on to the next stage.
+* Fail, the next stage is not (usually) executed and the pipeline ends early.
+
+More information: https://docs.gitlab.com/ee/ci/pipelines.html
+
+=== Prepare the lab
+
+* Go to Ansible Tower UI
+* Create a new project:
+** *NAME*: my-webservers
+** *ORGANIZATION*: Default
+** *SCM*: git
+** *SCM URL*: https://gitlab.com/dmunne/my-webservers-TEST.git
+
+* Create a new job template
+** *NAME*: Deploy Test Webservers
+** *JOB TYPE*: Run
+** *INVENTORY*: Ansible Workshop Inventory
+** *PROJECT*: my-webservers
+** *PLAYBOOK*: apache-setup.yml
+** *CREDENTIAL*: <student_id>
+** *LIMIT*: dev (`if this group doesn't exist, create it!`)
+** *ENABLE PRIVILEGE ESCALATION*: true
+
+* Create a new job template
+** *NAME*: Deploy Prod Webservers
+** *JOB TYPE*: Run
+** *INVENTORY*: Ansible Workshop Inventory
+** *PROJECT*: my-webservers
+** *PLAYBOOK*: apache-setup.yml
+** *CREDENTIAL*: <student_id>
+** *LIMIT*: prod (`if this group doesn't exist, create it!`)
+** *ENABLE PRIVILEGE ESCALATION*: true
+
+=== New Gitlab repository
+
+* Create a new repo on Gitlab named *cicd-tower*.
+
+* Create a playbook.yml:
+
+----
+---
+- name: Implement a basic webserver
+  hosts: webservers
+  vars:
+    packages:
+      - httpd
+      - httpd-devel
+
+  tasks:
+    - name: Install the webserver software
+      yum:
+        name: "{{packages}}"
+        state: installed
+
+    - name: Start and persistently enabled httpd
+      service:
+        name: httpd
+        enabled: true
+        state: started
+
+    - name: Open the port in the firewall
+      firewall:
+        service: http
+        state: enabled
+        immediate: true
+        permanent: true
+
+    - copy:
+        content: "Hello world, v1.0\n"
+        dest: /var/www/html/index.html
+
+    - name: Smoke Test
+      uri:
+        url: "http://{{ inventory_hostname }}"
+        return_content: yes
+        status_code: 200
+      register: response
+      delegate_to: localhost
+      become: no
+      failed_when: '"Hello World" not in response.content'
+----
+
+* create a CI/CD pipeline file named .gitlab-ci.yml:
+
+----
+variables:
+  LAUNCH_TOWER_JOB: tower-cli job launch --monitor --insecure
+  TOWER_CREDENTIALS: -u admin -p ansibleWS -h <student_id>.409e.rhdemo.io
+  GIT_REPO: https://<student_id>:ansible@gitlab.com/<student_id>/cicd-tower.git
+
+before_script:
+  - apt-get update -qy
+  - apt-get install -y python-dev python-pip
+  - git submodule update --init
+  - pip install --upgrade ansible ansible-lint ansible-tower-cli
+  - ansible --version
+  - ansible-lint --version
+
+stages:
+  - lint
+  - deploy
+  - auto_merge
+
+# First stage; all branches
+syntax check and linting:
+  stage: lint
+  script:
+    - if ls *.yml; then true; else echo "No playbooks found!"; exit 1; fi
+    - ansible-lint *.yml
+
+#Second stage; only dev branch
+launch test job:
+  stage: deploy
+  script:
+    - tower-cli config verify_ssl false
+    - $LAUNCH_TOWER_JOB $TOWER_CREDENTIALS -J "Deploy Test Webservers"
+    - echo $?
+  only:
+    - dev
+
+#Second stage; only the master branch
+launch prod job:
+  stage: deploy
+  script:
+    - tower-cli config verify_ssl false
+    - $LAUNCH_TOWER_JOB $TOWER_CREDENTIALS -J "Deploy Prod Webservers"
+    - echo $?
+  only:
+    - master
+
+#Third stage; only applies to the dev branch
+push to master:
+  stage: auto_merge
+  script:
+    - git config --global user.email "student@redhat.com"
+    - git config --global user.name "Student"
+    - git remote set-url origin $GIT_REPO
+    - git checkout dev && git pull
+    - git checkout master && git pull
+    - git merge --no-ff dev
+    - git push origin master
+  only:
+    - dev
+----
+
+The repo should look like this:
+
+----
+# tree
+.
+├── .gitlab-ci.yml
+└── playbook.yml
+----
+
+* create a new branch dev
+
+----
+# git checkout -b dev
+Switched to a new branch 'dev'
+
+# git branch
+* dev
+  master
+----
+
+There're some error on the playbook.yml file. Can you fix it?
+
+TIP: You can use ansible-lint command.
+
+----
+# ansible-lint playbook.yml
+----
+
+* As long as the playbook is correct (exit 0), push the code to the repository:
+
+----
+# git add .
+# git commit -m "Implemented CI pipeline"
+# git push
+----
+
+=== CI/CD Pipeline
+
+* Go to Gitlab repository URL (https://gitlab.com/<student_id>/cicd-tower.git)
+* Select the cicd-project
+* From the menu on the left, click CI/CD (or the rocket icon, if the menu is collapsed) then Pipelines
+
+image::pipeline_success.png[]
+
+Note that the pipeline has 3 stages called in order: lint, deploy, then auto_merge.
+
+To see what happens at each stage, click on the icon of the stage. At stage 1, you lint the playbook and check syntax. At stage 2, you trigger the Deploy Test Webservers job template. At stage 3, you merge the code from the dev branch into the master branch, and push the merged changes to the remote repository. This triggers another CI/CD pipeline for the master branch.
+
+* Return to the Tower UI and verify the job executions
+* Verify Apache Service
 
 == The End
 
