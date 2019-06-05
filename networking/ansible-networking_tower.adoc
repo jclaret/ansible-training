@@ -1,0 +1,687 @@
+:scrollbar:
+:data-uri:
+:toc: left
+:numbered:
+:icons: font
+:imagesdir: ./images
+
+== Ansible Tower Concepts
+
+To start using Ansible Tower, some concepts and naming convention should be known.
+
+=== Dashboard
+
+When logged in to Ansible Tower using the web UI, the administrator can view a graph that shows
+
+* recent job activity
+* the number of managed hosts
+* quick pointers to lists of hosts with problems. 
+
+The dashboard also displays real time data about the execution of tasks completed in playbooks.
+
+=== Projects
+
+image::menu1.png[]
+
+Projects are logical collections of Ansible playbooks in Ansible Tower. These playbooks either
+reside on the Ansible Tower instance, or in a source code version control system supported
+by Tower.
+
+=== Inventories
+
+image::menu2.png[]
+
+An Inventory is a collection of hosts against which jobs may be launched, the same as an Ansible inventory file. Inventories are divided into groups and these groups contain the actual hosts. Groups may be populated manually, by entering host names into Tower, or from one of Ansible Tower’s supported cloud providers.
+
+=== Credentials
+
+image::menu3.png[]
+
+Credentials are utilized by Tower for authentication when launching Jobs against machines, synchronizing with inventory sources, and importing project content from a version control system. Credential configuration can be found in the Settings.
+
+Tower credentials are imported and stored encrypted in Tower, and are not retrievable in plain text on the command line by any user. You can grant users and teams the ability to use these credentials, without actually exposing the credential to the user.
+
+=== Templates
+
+image::menu4.png[]
+
+A job template is a definition and set of parameters for running an Ansible job. Job templates are useful to execute the same job many times. Job templates also encourage the reuse of Ansible playbook content and collaboration between teams. To execute a job, Tower requires that you first create a job template.
+
+=== Jobs
+
+image::menu5.png[]
+
+A job is basically an instance of Tower launching an Ansible playbook against an inventory of hosts.
+
+== Networking Credentials
+
+Essential for working with networking devices are the credentials used to access the target devices. These can still be provided in the inventory variables. But since the login credentials are often sensitive information, it makes more sense to provide them via Tower directly, in a secure way.
+
+WARNING: This is one of the most important features of Tower: *Credential Separation*! Credentials are defined separately and not with the hosts or inventory settings.
+
+You should already have the web UI open, if not: Point your browser to *\https://tower-GUID.rhpds.opentlc.com*, accept the certificate and log in as `admin` with the given password. In the Tower web UI click *Settings*, it is the gear-shaped icon to the upper right. From the settings choose the *CREDENTIALS* box. Now:
+
+* Click the *+ADD* button to add new credentials
+** *NAME:* Networking Credentials
+** *ORGANIZATION:* Default
+** *TYPE:* Network
+** *USERNAME:* admin
+
+As we are using password authentication, you have to provide the password `cisco` - that can be used to access the networking devices - in the *PASSWORD* field. Also, the password needs to be entered again in the *AUTHORIZE PASSWORD* field. This is necessary since often network devices require an additional *authorize* step to gain higher privileges.
+
+TIP: Whenever you see a magnifiying glass icon next to an input field, clicking it will open a list to choose from.
+
+You have now setup credentials to use later for your networking devices.
+
+== Create an Inventory
+
+Additionally we need an inventory of your managed networking devices. This is the equivalent of an inventory file in Ansible Engine. There is a lot more to it (like dynamic inventories) but let's start with the basics.
+
+Create the inventory:
+
+* In the web UI go to *INVENTORIES* and click *+ ADD->INVENTORY*
+* *NAME:* `Networking Inventory`
+* *ORGANIZATION:* Default
+* Click *SAVE*
+
+Add your managed hosts:
+
+* Click on the just created inventory *Networking Inventory*
+* Click the *HOSTS* button
+* Click the *+ADD HOSTS* button
+* *HOST NAME:* `csr1.example.com`
+* Click *SAVE*
+* Repeat to add `csr2.example.com` as a second host.
+
+You have now created an inventory with two managed hosts.
+
+== Using Variables
+
+You might have seen you can add variables for a host in the inventory. We will use this to enforce the connection type to `local` for all devices in this inventory. This is required for modules of the IOS type.
+
+* Go to *INVENTORIES -> Networking Inventory*
+* In the box *VARIABLES* enter `ansible_connection: local` underneath the three existing dashes
+
+* Click *SAVE*
+
+== Add a new Project
+
+A Tower *PROJECT* is a logical collection of Ansible playbooks. You can manage playbooks by either placing them manually on your Tower server, or by placing your playbooks into a source code management (SCM) system supported by Tower, including Git, Subversion, and Mercurial.
+
+You should definitely keep your Playbooks under version control. In this lab we'll use Playbooks kept in a Git repository.
+
+=== Create the Playbook
+
+In the SSH console on host control.example.com as user `git` create the playbook _/home/git/git-work/interface-description.yml_:
+
+----
+---
+- name: change interface description
+  hosts: all
+  gather_facts: no
+
+  tasks:
+    - name: collect device running-config
+      ios_command:
+        commands: show running-config interface GigabitEthernet 3
+      register: running_config
+
+    - name: output running-config
+      debug: var=running_config
+
+    - name: administratively enable interface
+      ios_config:
+        lines: no shutdown
+        parents: interface GigabitEthernet 3
+      when: '"shutdown" in running_config.stdout[0]'
+      register: new_state
+
+    - name: change description
+      ios_config:
+        lines: description Ansible controlled interface
+        parents: interface GigabitEthernet 3
+
+    - name: collect device running-config
+      ios_command:
+        commands: show running-config interface GigabitEthernet 3
+      register: new_config
+
+    - name: output new address
+      debug: var=new_config
+----
+
+TIP: Note the difference to other Playbooks you might have written! Most importantly there is no `become` and `hosts` is set to `all`. Also, `gather_facts` is set to `no`: this is due to the way network devices are currently queried: since the initial connect is local, the `gather_facts` would only gather the facts of the Tower.
+
+=== Add the Playbook to Git
+
+Now add the file to Git, commit and push to origin:
+
+----
+[git@control ~]$ cd /home/git/git-work
+[git@control git-work]$ git add interface-description.yml
+[git@control git-work]$ git commit -a -m "Interface description Playbook added"
+[git@control git-work]$ git push origin master
+----
+
+For education purpose this playbook does print out the content of the configuration two times: before changes are done, and after changes are done. This provides a better understanding and control of what happens. However, in production this would not be done usually.
+
+To configure and use this repository as a *Source Control Management (SCM)* system in Tower you have to:
+
+* Create credentials to access it using SSH with key authentication
+* Create a Project that uses the repository
+
+=== Create Credentials
+
+First we have to create credentials again, this time to access the Git repository over SSH. As you will need the private key of user git (the repo owner) from `control.example.com` for the credentials:
+
+* In a terminal log in to `control.example.com` as root. Then become user git and `cat` the SSH private key:
+----
+[root@control ~]# su - git
+[git@control ~]$ cat .ssh/id_rsa
+----
+
+* Copy the complete private key (including *BEGIN* and *END* lines) into the clipboard
+
+In the Tower web UI click the icon for *Settings*. From the settings choose the *CREDENTIALS* box. 
+
+* Click the *+ADD* button to add new credentials
+* *NAME*: control git
+* *CREDENTIAL TYPE*: `Source Control`
+* *USERNAME*: git
+* Paste the SSH private key for the git user from control.example.com into the box
+* Click *SAVE*
+
+=== Create the Project
+
+* In the *PROJECTS* view click *+ADD*
+* *NAME:* Control Git Repo
+* *ORGANIZATION:* Default
+* *SCM TYPE:* *Git*
+* Point to the Git repo on the control host: 
+** *SCM URL:* `control.example.com:/home/git/git-repo`
+* *SCM CREDENTIAL:* `control git`
+* *SCM UPDATE OPTIONS:* Tick all three boxes to always get a fresh copy of the repository and to update the repository when launching a job.
+* Click *SAVE*
+
+TIP: The new Project will be synced after creation automatically. 
+
+Sync the Project again with the Git repository by going to the *PROJECTS* view and clicking the cloudy *START AN SCM UPDATE* icon to the right of the Project.
+
+* After starting the sync job, go to the *JOBS* view, find your job and have a look at the details.
+
+== Create a Job Template and Run a Job
+
+A job template is a definition and set of parameters for running an Ansible job. Job templates are useful to execute the same job many times. So before running an Ansible *Job* from Tower you must create a *Job Template* that pulls together:
+
+* Inventory: On what hosts should the job run?
+* Credentials for the hosts
+* Project: Where is the Playbook?
+* What Playbook to use?
+
+Okay, let's just do that:
+
+* Go to the *TEMPLATES* view and click *+ADD* -> *Job Template*
+** *NAME:* `Networking Interface Description Template`
+** *JOB TYPE:* Run
+** *INVENTORY:* `Networking Inventory`
+** *PROJECT:* `Control Git Repo`
+** *PLAYBOOK:* `interface-description.yml`
+** *CREDENTIAL:* Here you need to pick two: first, pick the `Demo Credential`, and afterwards, in the credential dialog, click on the drop down menu *CREDENTIAL TYPE*, click on *Network*, and pick the previously created `Networking Credentials`
+** Click *SAVE*
+
+Start a Job using this Job Template by going to the *TEMPLATES* view and clicking the rocket icon. Have a good look at the information the view provides.
+
+TIP: This will take a couple of minutes because you configured the Project to update the SCM on launch. 
+
+After the Job has finished go to the *JOBS* view:
+
+* All jobs are listed here, you should see directly before the Playbook run an SCM update was started. 
+* This is the Git update we configured for the *Project* on launch!
+
+== Check Results
+
+From `control.example.com` log in to `csr1.example.com` and check the interface description the Playbook changed:
+
+----
+[ansible@control ~]$ ssh admin@csr1
+csr1#sh int desc
+Interface                      Status         Protocol Description
+Gi1                            up             up       
+Gi2                            up             up       
+Gi3                            up             up       "Ansible controlled interface"
+----
+
+Do the same on `csr2.example.com`.
+
+== Create a Survey
+
+You might have noticed the *ADD SURVEY* button in the *TEMPLATE* configuration view. A survey is a way to create a simple form to ask for parameters that get used as variables when a *TEMPLATE* is launched as a *JOB*.
+
+You have changed the description of the interfaces on both networking devices. Now we're going to change the actual IP configuration on these interfaces. The task is:
+
+* Create a Playbook to not only change the description of the interfaces, but also the IP configuration of the third interface
+* Make the description and parts of the IP as variables
+* Add the Playbook to the Git repository.
+* Create a Template with a survey
+* Launch it
+
+=== Create the Playbook
+
+In the SSH console on host control.example.com as user `git` create the playbook _/home/git/git-work/networking-configuration.yml_:
+----
+---
+- name: backup router configurations
+  hosts: all
+  gather_facts: no
+
+  tasks:
+    - name: collect device running-config
+      ios_command:
+        commands: show running-config interface GigabitEthernet 3
+      register: running_config
+
+    - name: output running-config
+      debug: var=running_config
+
+    - name: administratively enable interface
+      ios_config:
+        lines: no shutdown
+        parents: interface GigabitEthernet 3
+      when: '"shutdown" in running_config.stdout[0]'
+      register: new_state
+
+    - name: change ip address
+      ios_config:
+        lines: "ip address 10.0.{{ wan_subnet }}.{{ wan_ip }} 255.255.255.0"
+        parents: interface GigabitEthernet 3
+
+    - name: change description
+      ios_config:
+        lines: description "{{ interface_description }}"
+        parents: interface GigabitEthernet 3
+
+    - name: collect device running-config
+      ios_command:
+        commands: show running-config interface GigabitEthernet 3
+      register: new_config
+
+    - name: output new address
+      debug: var=new_config
+----
+
+Note the similarity to the first playbook. However, in this case the description in the task *change description* is a variable: `interface_description`. Also, there is an additional task, *change ip address*, that defines the IP address for the third interface. The IP address is set together by two variables, `wan_subnet` and `wan_ip`.
+
+=== Add the Files to Git
+
+Now add the files to Git, commit and push to origin:
+----
+[git@control ~]$ cd /home/git/git-work
+[git@control git-work]$ git add networking-configuration.yml
+[git@control git-work]$ git commit -a -m "Network configuration playbook added"
+[git@control git-work]$ git push origin master
+----
+
+TIP: In real world scenarios you would structure your Git (or whatever SCM) in a meaningful way. *And* you would use Ansible Roles.
+
+Now that we have new content in the Git repo, you can update the *Project* with the new Git content:
+
+* Go to the *PROJECTS* view and start an SCM update for "Control Git Repo" (the cloudy button). 
+* Change to the *JOBS* view, look for the job and click it. Watch the output and wait until the job has finished successfully.
+
+TIP: As you've configured the Project to update on launch, this would have happenend anyway.
+
+=== Set host specific variables
+
+The above mentioned playbook changes the IP for the third interface. However, since they are both connected to the same wan, they should not have the exact same address. Thus we will set the variable `wan_ip` for each host in the inventory.
+
+* Got to *INVENTORIES* and click *Networking Inventory*
+* Click on the button *HOSTS*
+* Click the edit button in the line of the first host, *csr1.example.com*
+* In the field *VARIABLES*, enter the line: `wan_ip: 100`
+* Click *SAVE*
+* Click the edit button in the line of the second host, *csr2.example.com*
+* In the field *VARIABLES*, enter the line: `wan_ip: 110`
+* Click *SAVE*
+
+=== Create a Template with a Survey
+
+Now you create a new Template that includes a survey:
+
+* Go to *TEMPLATES* and click *+ADD* -> *JOB TEMPLATE*
+* *NAME:* `Networking Interface Configuration Template`
+* Set the proper parameters for the job to
+** Use the appropriate inventory
+** Use the correct project
+** Use the new playbook
+** USe the right credentials
+
+Try for yourself, the solution is below.
+
+WARNING: *Solution Below!*
+
+* *NAME:* `Networking Interface Configuration Template`
+* *JOB TYPE:* `Run`
+* *INVENTORY:* `Networking Inventory`
+* *PROJECT:* `Control Git repo`
+* *PLAYBOOK:* `networking-configuration.yml`
+* *MACHINE CREDENTIALS:* `Demo Credentials` and `Networking Credentials`
+* Click *SAVE*
+
+==== Add the Survey
+
+* In the Template, click the *ADD SURVEY* button
+* Under *ADD SURVEY PROMPT* fill in:
+** *PROMPT:* `WAN subnet`
+** *ANSWER VARIABLE NAME:* `wan_subnet`
+** *ANSWER TYPE:* `Text`
+* Click *+ADD*
+* In the same way add a second *SURVEY PROMPT*
+** *PROMPT:* `Interface description`
+** *ANSWER VARIABLE NAME:* `interface_description`
+** *ANSWER TYPE:* `Text`
+* Click *+ADD*
+* Click *SAVE* for the Survey
+* Click *SAVE* for the Template
+
+=== Launch the Template
+
+Now go back to the *TEMPLATES* view and launch *Networking Interface Configuration Template*
+
+* Before the actual launch the survey will ask for *WAN SUBNET* and *INTERFACE DESCRIPTION*. Fill in the subnet ip `112` and the text `Ansible Tower controlled` and click on *LAUNCH*.
+
+TIP: Note how the two survey lines are shown to the left of the Job view as *EXTRA VARIABLES*.
+
+After the job has completed, check the output of the Playbook run in Tower. Note that the new subnet IP is shown, also note the new description.
+
+=== Check Results
+
+In the SSH console on control.example.com, run: 
+----
+[ansible@control ~]# ssh admin@csr1.example.com
+----
+
+In the following password query, enter the password `cisco`. 
+
+To verify the changes, run these commands:
+
+----
+csr1#sh ip int br
+Interface              IP-Address      OK? Method Status                Protocol
+GigabitEthernet1       192.168.0.100   YES NVRAM  up                    up      
+GigabitEthernet2       192.168.1.100   YES NVRAM  up                    up      
+GigabitEthernet3       10.0.112.100    YES manual up                    up
+----
+
+----
+csr1#sh int desc
+Interface                      Status         Protocol Description
+Gi1                            up             up       
+Gi2                            up             up       
+Gi3                            up             up       Ansible controlled interface
+----
+
+In addition you could have a look at the configuration:
+
+----
+csr1#enable
+csr1#show running-config  
+Building configuration...
+[...]
+----
+
+Press *space* two times to get the full output. The interface configuration is printed near the end. It shows the new description and the new subnet:
+
+----
+interface GigabitEthernet3
+ description "Ansible Tower controlled"
+ ip address 10.0.112.100 255.255.255.0
+ negotiation auto
+ no mop enabled
+ no mop sysid
+----
+
+== Ansible Tower Role Based Access Control
+
+You have already learned how Tower separates credentials from users. Another advantage of Ansible Tower is the user and group rights management.
+
+=== Ansible Tower Users
+
+There are four types of Tower Users:
+
+* *Normal User*: Have read and write access limited to the inventory and projects for which that user has been granted the appropriate roles and privileges.
+* *System Auditor*: Auditors implicitly inherit the read-only capability for all objects within the Tower environment.
+* *System Administrator*:  Has admin, read, and write privileges over the entire Tower installation.
+* Also, when Tower is configured with multiple organizations (not covered in this lessons) there are *organization admins*: they have admin, read and write privileges in their entire organization, but not in others.
+
+Let's create a user:
+
+* Go to *Settings* by clicking the "gear"-icon and choose *USERS*
+* Click *+ADD*
+* Fill in the values for the new user:
+** *FIRST NAME:* `Norbert`
+** *LAST NAME:* `Network`
+** *EMAIL:* nnetwork@example.com
+** *USERNAME:* `nnetwork`
+** *USER TYPE:* Normal User
+** *PASSWORD:* <as provided>
+** *CONFIRM PASSWORD:* <as provided>
+* Click *SAVE*
+
+=== Ansible Tower Teams
+
+A Team is a subdivision of an organization with associated users, projects, credentials, and permissions. Teams provide a means to implement role-based access control schemes and delegate responsibilities across organizations. For instance, permissions may be granted to a whole Team rather than each user on the Team.
+
+Create a Team:
+
+* Go to *Settings* and choose *TEAMS*.
+* Click *+ADD* and create a team named `Network Team`.
+* Click *SAVE*
+
+Now you can add a user to the Team:
+
+* Switch to the *USERS* view of the `Network Team` by clicking the *USERS* button.
+* Click *+ADD* and select the `nnetwork` user.
+* The dialog now asks for a role to assign, the following permission settings are available:
+** *Admin*: This User should have privileges to manage all aspects of the team
+** *Member*: This User should be a member of the team
+* Assign the *Member* role.
+* Click *SAVE*
+
+Now click the *PERMISSIONS* button in the *Team*  view, you will be greeted with *NO PERMISSIONS HAVE BEEN GRANTED*.
+
+Permissions allow to read, modify, and administer projects, inventories, and other Tower elements. Permissions can be set for different resources.
+
+=== Granting Permissions
+
+To allow users or teams to actually do something, you have to set permissions. The user *nnetwork* should only be allowed to execute content to configure the assigned switches.
+
+* In the Permissions view of the Team `Network Team` click the *+ ADD PERMISSIONS* button.
+* A new window opens. You can choose to set permissions for a number of resources.
+** Select the resource type *JOB TEMPLATES*
+** Choose the `Networking Interface Configuration Template` by ticking the box next to it.
+* The second part of the window opens, here you assign roles to the selected resource.
+** Choose *Execute*
+* Click *SAVE*
+
+=== Test Permissions
+
+Now log out of Tower's web UI and in again as the *nnetwork* user.
+
+* Go to the *TEMPLATES* view, you should notice for Norbert only the `Networking Interface Configuration Template` is listed. The user is allowed to view and lauch, but not to edit the Template.
+* Launch the Job Template, enter the survey content: `42` as *WAN SUBNET* and `Ansible Tower controlled via user` as *INTERFACE DESCRIPTION*.
+* In the following *JOBS* view have a good look around, note that there where changes to the host (of course...).
+
+Check the result:
+
+* In the SSH console on control.example.com:
+----
+[ansible@control ~]$ ssh admin@csr2.example.com
+Password:
+csr2>enable
+Password:
+csr2#show running-config
+Building configuration...
+[...]
+interface GigabitEthernet3
+ description "Ansible Tower controlled via user"
+ ip address 10.0.42.110 255.255.255.0
+ negotiation auto
+ no mop enabled
+ no mop sysid
+[...]
+----
+
+== Final Lab or Putting it all Together
+
+This is the final challenge where we try to put most of what you have learned together. For this lab log out of the web UI and log in as user *admin* again.
+
+=== Let's set the stage
+
+Your operations team and your application development team like what they see in Tower. To really use it in their environment they put together these requirements:
+
+* All routers (csr1.example.com and csr2.example.com) should go in one group
+* As the routers can be used for development purposes or in production, there has to be a way to flag them accordingly as "stage dev" or "stage prod".
+** Currently csr1 is used as a dev system and csr2 in production.
+* Of course the subnet and the famous description will be different between dev and prod stages.  
+** There should be an interface description stating the environment
+** There should be different subnets for each environment
+* The network admin `net-admin` should have access to a survey to change the subnet and description for dev and prod switches.
+
+=== Set up the Git Repository
+
+As a prerequsite you have to setup a new Git repo containing the needed files on control.example.com.
+
+* Login via SSH to control.example.com and become user `git`:
+----
+[root@control-<GUID> ~]# su - git
+----
+
+ * Create the bare Git repo:
+----
+[git@control-<GUID> ~]$ git init --bare git-routers
+----
+
+* log out as user git, log in as user ansible:
+----
+[git@control ~]$ exit
+logout
+[root@control ~]# su - ansible
+----
+
+* Create the working copy of the repo:
+----
+[ansible@control ~]$ mkdir git-routers
+[ansible@control ~]$ cd git-routers/
+[ansible@control git-routers]$ git init .
+----
+
+* Set the bare repo as origin for the work repo (command is one line):
+----
+[ansible@control git-routers]$ git remote add origin git@control.example.com:/home/git/git-routers
+----
+
+* Set the necessary identity data for Git:
+----
+[ansible@control git-routers]$ git config --global user.email "git@example.com" &&  git config --global user.name "git"
+----
+
+* Create the Playbook in the work repo _/home/ansible/git-routers_:
+
+_stage_routers.yml_
+----
+---
+- name: Deploy router configuration
+  hosts: all
+  tasks:
+
+    - name: change ip address
+      ios_config:
+        lines: "ip address 10.0.{{ wan_subnet }}.{{ wan_ip }} 255.255.255.0"
+        parents: interface GigabitEthernet 3
+
+    - name: change description
+      ios_config:
+        lines: description "{{ stage_router }}"
+        parents: interface GigabitEthernet 3
+----
+
+* Add the files, commit and push to origin:
+----
+[ansible@control git-routers]$ git add stage_routers.yml
+[ansible@control git-routers]$ git commit -m "initial commit"
+[ansible@control git-routers]$ git push origin master
+----
+
+=== Prepare Inventory
+
+There is of course more then one way to accomplish this, but here is what you should do:
+
+* Create an inventory `Routers` containing two sub-groups, `dev` and `prod`
+* Add the variable `ansible_connection: local` to the main inventory
+* Put `csr1.example.com` into group `dev`, and `csr2.example.com` into `prod`
+* Add a variable `stage_router: dev` to group `dev` and `stage_router: prod` to group `prod`
+* Add the host variable `wan_ip: 100` to `csr1.example.com` and `wan_ip: 110` to `csr2.example.com`
+
+=== Create the Project
+
+* Create a new *Project* named `Router stages` using the new Git repository
+** *Credentials*: control git
+** *SCM URL*: control.example.com:/home/git/git-routers
+
+=== Create the Template
+
+* Create a new *Template* named `Router Stage Configuration` that 
+** targets the `Router` inventory 
+** uses the Playbook `stage_routers.yml` from the new `Router stages` Project
+** Define one variable: `wan_subnet: 23`
+* Run the template
+
+=== Check the results:
+
+----
+[ansible@control ~]$ ssh admin@csr2.example.com
+Password:
+csr2>enable
+Password:
+csr2#show running-config
+Building configuration...
+[...]
+interface GigabitEthernet3
+description "prod"
+ip address 10.0.23.110 255.255.255.0
+negotiation auto
+no mop enabled
+no mop sysid
+[...]
+----
+
+Do the same for `csr1.example.com`, the description shoud be `dev`.
+
+=== Add Survey
+
+* Add a survey to the Template to allow changing the variable `wan_subnet` and make it available to user `net-admin`.
+* Run the survey as user `net-admin`
+* Check the results:
+----
+[ansible@control ~]$ ssh admin@csr2.example.com
+Password:
+csr2>enable
+Password:
+csr2#show running-config
+Building configuration...
+[...]
+interface GigabitEthernet3
+description "prod"
+ip address 10.0.111.110 255.255.255.0
+negotiation auto
+no mop enabled
+no mop sysid
+[...]
+----
+
+=== Solution
+
+WARNING: *Solution Not Below*
+
+You have done all the required configuration steps in the lab already. If unsure, just refer back to the respective chapters. 
+
