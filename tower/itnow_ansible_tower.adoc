@@ -37,7 +37,7 @@ In this lab you work in a pre-configured lab environment. You will have access t
 | Students | https://409e.rhdemo.io ||
 | Identity Manager | https://idm.example.com | 35.241.189.24 |
 | MariaDB | N/A | 35.241.189.24 |
-| Git Repos | https://gitlab.com/jclaret/ansible-tower/blob/master/tower/itnow_ansible_tower.adoc ||
+| Git Repos | https://gitlab.com/tower-training/ansible-tower/blob/master/tower/itnow_ansible_tower.adoc ||
 | Control Node | https://<student>.409e.rhdemo.io ||
 | Managed Node1 | node1.example.com ||
 | Managed Node2 | node2.example.com ||
@@ -498,7 +498,7 @@ In order to use an inventory code,
 * cretae a new project
 * set a _name_ and _organization_
 * choose a SCM tpye as *_GIT_*
-* set the SCM URL to https://gitlab.com/jclaret/ansible-tower-inventory.git
+* set the SCM URL to https://gitlab.com/tower-training/ansible-tower-inventory.git
 * you can define _branch_, _commit_ or _credentials_ (not needed for this exercise)
 * click on *SAVE*
 
@@ -1060,7 +1060,7 @@ To use external roles in a project, they need to be referenced in a file called 
 
 The `requirements.yml` needs to be read - either on the command line by invoking `ansible-galaxy`, or automatically by Ansible Tower during project check outs. In both cases the file is read, and the roles are checked out and stored locally, and the roles can be called in playbooks. The advantage of Tower here is that it takes care of all that - including authorization to the Git repo, finding a proper place to store the role, updating it when needed and so on. 
 
-In this example, we will include a role which ships a simple `index.html` file as template and reloads the apache web server. The role is already shared in Gitlab at *\https://gitlab.com/jclaret/ansible-tower-shared-apache-role*.
+In this example, we will include a role which ships a simple `index.html` file as template and reloads the apache web server. The role is already shared in Gitlab at *\https://gitlab.com/tower-training/ansible-tower-shared-apache-role*.
 
 To include it with the existing structured content, first we have to create a file called `roles/requirements.yml` and reference the role there:
 
@@ -1071,7 +1071,7 @@ WARNING: Make sure you work as user *ansible*
 # Import directly from Galaxy
 - src: geerlingguy.nginx
 # Import from a local Git repository
-- src: https://gitlab.com/jclaret/ansible-tower-shared-apache-role.git
+- src: https://gitlab.com/tower-training/ansible-tower-shared-apache-role.git
   scm: git
   version: master
   name: shared-apache-role
@@ -1386,11 +1386,11 @@ First you have to set up the Git repos as Projects like you normally would. You 
 
 * Create the project for web operations:
 ** It should be named *Webops Git Repo*
-** The URL to access the repo is *\https://gitlab.com/jclaret/ansible-tower-webops.git*
+** The URL to access the repo is *\https://gitlab.com/tower-training/ansible-tower-webops.git*
 
 * Create the project for the application developers:
 ** It should be named *Webdev Git Repo*
-** The URL to access the repo is *\https://gitlab.com/jclaret/ansible-tower-webdev.git*
+** The URL to access the repo is *\https://gitlab.com/tower-training/ansible-tower-webdev.git*
 
 WARNING: *Solution Below*
 
@@ -1403,7 +1403,7 @@ image:green_plus.png[20,20] and fill in:
 ** *NAME:* Webops Git Repo
 ** *ORGANIZATION:* Default
 ** *SCM TYPE:* Git
-** *SCM URL:* \https://gitlab.com/jclaret/ansible-tower-webops.git
+** *SCM URL:* \https://gitlab.com/tower-training/ansible-tower-webops.git
 ** *SCM CREDENTIAL:* Gitlab Control
 ** *SCM UPDATE OPTIONS:* Tick all three boxes.
 * Click *SAVE*
@@ -1413,7 +1413,7 @@ click image:green_plus.png[20,20] and fill in:
 ** *NAME:* Webdev Git Repo
 ** *ORGANIZATION:* Default
 ** *SCM TYPE:* Git
-** *SCM URL:* \http://https://gitlab.com/jclaret/ansible-tower-webdev.git
+** *SCM URL:* \http://https://gitlab.com/tower-training/ansible-tower-webdev.git
 ** *SCM CREDENTIAL:* Gitlab Control
 ** *SCM UPDATE OPTIONS:* Tick all three boxes.
 * Click *SAVE*
@@ -1512,7 +1512,7 @@ In our demo case we use three playbooks which:
 * ensure configuration of PAM and login cryptography (STIG)
 * ensure absence of services and kernel modules (CIS).
 
-The Playbooks can be found in the "compliance" repository on Gitlab: `\https://gitlab.com/jclaret/ansible-tower-compliance.git`. Head over to GitLab web UI and have a look at the Playbooks to see what they do.
+The Playbooks can be found in the "compliance" repository on Gitlab: `\https://gitlab.com/tower-training/ansible-tower-compliance.git`. Head over to GitLab web UI and have a look at the Playbooks to see what they do.
 
 === Prepare the Compliance Lab
 
@@ -1524,7 +1524,7 @@ The compliance repository needs to be added as project. Feel free to use the web
 [root@control ~]# tower-cli project create -n "Compliance Repository" \
                     --organization Default \
                     --scm-type git \
-                    --scm-url https://gitlab.com/jclaret/ansible-tower-compliance.git \
+                    --scm-url https://gitlab.com/tower-training/ansible-tower-compliance.git \
                     --scm-clean 1 \
                     --scm-update-on-launch 1 \
                     --scm-credential "GitLab Credentials"
